@@ -1,74 +1,97 @@
-# Microservices with Eureka
+# Microservices with Eureka and OpenFeign
 
-This project has 3 Spring Boot services that work together using **Eureka Service Discovery**:
+This project has 4 Spring Boot services that work together using **Eureka Service Discovery** and **OpenFeign**:
 
 - `Eureka Server` (port `8761`)
 - `check-movie-service` Version A (port `8081`)
 - `check-movie-service-b` Version B (port `8082`)
+- `manage-movies` consumer service (port `8080`)
 
-## What each service does
+## Architecture overview
+
+1. `Eureka Server` is the registry where services register.
+2. Version A and Version B both register with the same service name:
+   - `check-movie-service`
+3. `manage-movies` calls `check-movie-service` through **OpenFeign** using the service name (not a fixed host/port).
+4. Eureka + load balancing resolve which instance receives the request (Version A or Version B).
+
+Because A and B share the same `spring.application.name`, requests from `manage-movies` may hit either instance.
+
+## Services
 
 ### 1) Eureka Server
 
-- Runs as the service registry.
-- All microservices register themselves here.
-- Eureka dashboard: `http://localhost:8761`
+- Role: service registry
+- URL: `http://localhost:8761`
 
 ### 2) check-movie-service (Version A)
 
-- `spring.application.name=check-movie-service`
-- Uses OMDb API to check if a movie exists.
+- App name: `check-movie-service`
+- Port: `8081`
+- External API: OMDb
 - Endpoint:
   - `GET /check?title=...`
   - Example: `http://localhost:8081/check?title=Inception`
-- Returns:
+- Responses:
   - `Movie exists (Version A)`
   - `Movie not found (Version A)`
 
 ### 3) check-movie-service-b (Version B)
 
-- `spring.application.name=check-movie-service` (same logical service name)
-- Uses TMDb API to check if a movie exists.
+- App name: `check-movie-service`
+- Port: `8082`
+- External API: TMDb
 - Endpoint:
   - `GET /check?title=...`
   - Example: `http://localhost:8082/check?title=Inception`
-- Returns:
+- Responses:
   - `Movie exists (Version B)`
   - `Movie not found (Version B)`
 
-## How they work together with Eureka
+### 4) manage-movies (consumer)
 
-1. Start `Eureka Server` first.
-2. Start Version A and Version B.
-3. Both movie services register in Eureka under the same app name:
-   - `CHECK-MOVIE-SERVICE`
-4. Eureka then knows there are multiple instances of the same logical service on different ports (`8081`, `8082`).
-
-In this setup, clients can discover service instances through Eureka instead of hardcoding a single host/port.
+- App name: `manage-movies`
+- Port: `8080`
+- Uses: Eureka Discovery Client + OpenFeign
+- Feign target: `@FeignClient(name = "check-movie-service")`
+- Endpoint:
+  - `GET /insert?title=...`
+  - Example: `http://localhost:8080/insert?title=Inception`
+- Responses:
+  - `Movie validated. Ready to insert into Database. Response: ...`
+  - `Cannot insert: Movie not found`
 
 ## API keys
 
-Set your keys in each service:
+Set your keys in:
 
 - `check-movie-service/src/main/resources/application.properties`
   - `omdb.api.key=YOUR_KEY`
 - `check-movie-service-b/src/main/resources/application.properties`
   - `tmdb.api.key=YOUR_KEY`
 
-## Run commands
+## Run order
 
-From each folder:
+1. Start `Eureka Server`
+2. Start `check-movie-service` (Version A)
+3. Start `check-movie-service-b` (Version B)
+4. Start `manage-movies`
 
-- Eureka:
-  - `mvn spring-boot:run`
-- Version A:
-  - `mvn spring-boot:run`
-- Version B:
-  - `mvn spring-boot:run`
+Run in each service folder:
+
+- `mvn spring-boot:run`
 
 ## Quick verification
 
 - Eureka dashboard: `http://localhost:8761`
-- Version A check: `http://localhost:8081/check?title=Inception`
-- Version B check: `http://localhost:8082/check?title=Inception`
+- Version A direct check: `http://localhost:8081/check?title=Inception`
+- Version B direct check: `http://localhost:8082/check?title=Inception`
+- Through Eureka + Feign (consumer): `http://localhost:8080/insert?title=Inception`
+
+Expected consumer behavior:
+
+- If movie exists in selected instance response:
+  - `Movie validated. Ready to insert into Database. Response: Movie exists (Version A|Version B)`
+- Otherwise:
+  - `Cannot insert: Movie not found`
 
